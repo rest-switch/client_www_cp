@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Device Control Panel</title>
+<link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap.min.css" rel="stylesheet" type="text/css" />
+<link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap-theme.min.css" rel="stylesheet" type="text/css" />
+<link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap3-dialog/1.34.4/css/bootstrap-dialog.min.css" rel="stylesheet" type="text/css" />
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.2/jquery.min.js"></script>
+<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/js/bootstrap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap3-dialog/1.34.4/js/bootstrap-dialog.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/3.1.2/rollups/hmac-sha256.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/3.1.2/components/enc-base64-min.js"></script>
+<!--
+<script src="https://crypto-js.googlecode.com/svn/tags/3.1.2/build/rollups/hmac-sha256.js"></script>
+<script src="https://crypto-js.googlecode.com/svn/tags/3.1.2/build/components/enc-base64-min.js"></script>
+-->
+<script>CryptoJS.enc.Base64._map = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_=";//rfc4648 base64url</script>
+<script src="js/datecoder-min.js"></script>
+<style type="text/css">
+  body {
+    padding-top: 72px;
+    padding-bottom: 42px;
+  }
+
+  .navbar-inverse .navbar-brand,
+  .navbar-inverse .navbar-brand:hover,
+  .navbar-inverse .navbar-brand:focus {
+    color: #25A617;
+  }
+
+  @media (max-width:767px) {
+    .checkbox, .radio {
+      color: #fff;
+      background-color: transparent;
+    }
+  }
+
+  @media (min-width:768px) {
+    form.form-group input.form-control {
+      padding: 4px 6px;
+      width: 256px;
+    }
+  }
+
+  form.form-group input.form-control {
+    margin-bottom: 10px;
+  }
+
+  div.panel-footer button.btn {
+    margin-right: 20px;
+  }
+</style>
+
+<script>
+  ////////////////////////////////////////
+  $( document ).ready(function() {
+    $("input[type=text]").each(function() {
+      if(this.id.startsWith("devid")) {
+        var val = localStorage.getItem(this.id);
+        if(val) this.value = val;
+      }
+    });
+  });
+
+  ////////////////////////////////////////
+  // select all when textbox clicked
+  $( document ).on('focus', 'input', function() {
+    $(this).select(); 
+  });
+
+  ////////////////////////////////////////
+  function alertInfo(msg) {
+    BootstrapDialog.show({
+      type: BootstrapDialog.TYPE_INFO,
+      title: 'Information',
+      message: '<p style="margin:12px">'+msg+'</p>',
+      buttons: [{label:'OK',action:function(self){self.close();}}]
+    });
+  }
+  function alertError(msg) {
+    BootstrapDialog.show({
+      type: BootstrapDialog.TYPE_WARNING,
+      title: 'Error',
+      message: '<p style="margin:12px">'+msg+'</p>',
+      buttons: [{label:'OK',action:function(self){self.close();}}]
+    });
+  }
+
+  ////////////////////////////////////////
+  // function isPasswdComplex(passwd) {
+  //   if(null == passwd) return(false);
+  //   if(passwd.length < 8) return(false);      // > 7 chars
+  //   if(!/\d/.test(passwd)) return(false);     // have digits
+  //   if(!/[a-z]/.test(passwd)) return(false);  // have lower
+  //   if(!/[A-Z]/.test(passwd)) return(false);  // have upper
+  //   return(true);
+  // }
+  function isPasswdComplex(passwd) {
+    if(passwd.length < 8) return(false);
+
+    var digit = false;
+    var upper = false;
+    var lower = false;
+    var special = false;
+
+    for(var i=0; i<passwd.length; ++i) {
+      var c = passwd.charCodeAt(i);
+      if((c > 47) && (c < 58)) {
+        digit = true;
+      } else if((c > 64) && (c < 91)) {
+        upper = true;
+      } else if((c > 96) && (c < 123)) {
+        lower = true;
+      } else {
+        special = true;
+      }
+
+      if((digit || special) && upper && lower) return(true);
+    }
+
+    return(false);
+  }
+
+  ////////////////////////////////////////
+  function getStoredCreds() {
+    // see if email is stored in localStorage
+    var persist = (null != localStorage.email);
+    var storage = persist ? localStorage : sessionStorage;
+    var creds = {
+      email: storage.email,
+      pwdHash: storage.pwdHash
+    };
+
+    return(creds);
+  }
+
+  ////////////////////////////////////////
+  // function validateEmail(email) {
+  //     var re = /^([\w-]+(?:\.[\w-]+)*)@((?:[\w-]+\.)*\w[\w-]{0,66})\.([a-z]{2,6}(?:\.[a-z]{2})?)$/i;
+  //     return(re.test(email));
+  // }
+
+  ////////////////////////////////////////
+  function storeCreds(persist, email, passwd) {
+    var re = /^([\w-]+(?:\.[\w-]+)*)@((?:[\w-]+\.)*\w[\w-]{0,66})\.([a-z]{2,6}(?:\.[a-z]{2})?)$/i;
+    if(!re.test(email)) {
+      alertError('The email address <b>'+email+'</b> is not valid.');
+      return(false);
+    }
+
+    if(!isPasswdComplex(passwd)) {
+      alertError('The password entered is not valid. A valid password must contain: \
+                  <ul> \
+                    <li>Eight or more characters</li> \
+                    <li>At least one digit</li> \
+                    <li>At least one upper-case letter</li> \
+                    <li>At least one lower-case letter</li> \
+                  </ul>');
+      return(false);
+    }
+
+    var storage = persist ? localStorage : sessionStorage;
+    storage.email = email;
+
+//    var sha256 = CryptoJS.algo.SHA256.create();
+//    sha256.update(email);
+//    sha256.update(passwd);
+//    var hash = sha256.finalize();
+    var hash = CryptoJS.HmacSHA256(email, passwd);
+    var b64Hash = hash.toString(CryptoJS.enc.Base64);
+    storage.pwdHash = b64Hash.replace(/=+$/,''); // trim trailing =
+
+    return(true);
+  }
+
+  ////////////////////////////////////////
+  function signin(form) {
+    if('flush' === form.value) {
+      delete sessionStorage.email;
+      delete sessionStorage.pwdHash;
+      delete localStorage.email;
+      delete localStorage.pwdHash;
+    } else {
+      var email = form[0].value;
+      var passwd = form[1].value;
+      var persist = form[3].checked;
+      //alertInfo("email: " + email + "\npasswd: " + passwd + "\npersist: " + persist);
+      var rc = storeCreds(persist, email, passwd);
+      if(!rc) return(false);
+    }
+
+    return(true);
+  }
+
+  ////////////////////////////////////////
+  function timingStats(devnum, ms, valcnt) {
+    if(valcnt < 5) valcnt = 5;
+
+    //                devid1_times
+    var key = ('devid' + devnum + '_times');
+    var raw = localStorage[key];
+    var data = [];
+    try {
+        var parsed = JSON.parse(raw);
+        if(Array.isArray(parsed)) data = parsed;
+    } catch(ex) { }
+    data.push(ms);
+
+    // examine the last 'valcnt' values
+    var minms = 8000;
+    var maxms = 0;
+    var totalms = 0;
+    var newData = [];
+    for(var i=data.length-1; i>=0; --i) {
+      var val = parseInt(data[i]);
+      if(val > 7) { // 8ms sanity
+        if(val > maxms) maxms = val;
+        if(val < minms) minms = val;
+        totalms += val;
+        var len = newData.unshift(val);
+        if(len >= valcnt) break;
+      }
+    }
+
+    localStorage[key] = JSON.stringify(newData);
+
+    var avgms = (totalms / newData.length);
+
+    var stats = {
+        'lastms' : parseInt(ms),
+        'minms': minms,
+        'avgms': avgms,
+        'maxms': maxms
+    };
+
+    return(stats);
+  }
+
+  ////////////////////////////////////////
+  function graphTimes(devnum, ms) {
+    // fetch aggregates
+    var stats = timingStats(devnum, ms, 10);
+
+    // last : avg
+    var totalms = (stats.avgms + stats.lastms);
+    var lastbar = parseInt(stats.lastms * 100 / totalms);
+    var avgbar = (100 - lastbar);
+
+    var lastelem = $("#devbar-"+devnum+"-min"); // last -> min
+    lastelem.width(lastbar+"%");
+    lastelem.html("<span>last: "+parseInt(stats.lastms)+"ms</span>");
+
+    var avgelem = $("#devbar-"+devnum+"-avg");
+    avgelem.width(avgbar+"%");
+    avgelem.html("<span>avg: "+parseInt(stats.avgms)+"ms</span>");
+
+    // min : avg : max
+    // var totalms = (stats.minms + stats.avgms + stats.maxms);
+    // var minbar = parseInt(stats.minms * 100 / totalms);
+    // var maxbar = parseInt(stats.maxms * 100 / totalms);
+    // var avgbar = (100 - minbar - maxbar);
+
+    // var minelem = $("#devbar-"+devnum+"-min");
+    // minelem.width(minbar+"%");
+    // minelem.html("<span>"+parseInt(stats.minms)+"ms</span>");
+
+    // var avgelem = $("#devbar-"+devnum+"-avg");
+    // avgelem.width(avgbar+"%");
+    // avgelem.html("<span>"+parseInt(stats.avgms)+"ms</span>");
+
+    // var maxelem = $("#devbar-"+devnum+"-max");
+    // maxelem.width(maxbar+"%");
+    // maxelem.html("<span>"+parseInt(stats.maxms)+"ms</span>");
+  }
+
+  ////////////////////////////////////////
+  function devidChange(elem) {
+    if(!elem.value) {
+      localStorage.removeItem(elem.id);
+    } else {
+      localStorage.setItem(elem.id, elem.value);
+    }
+  }
+
+  ////////////////////////////////////////
+  // ["hello","ah3avupwn"]
+  // ["writeOutputRegister",1,255]
+  // ["pulseRelay",1,250]
+  function sendDevice(devid, msg, callback) {
+    if((!devid) || (9 != devid.length)) return(false);
+
+    var uri = ('/pub/' + devid);
+    var cmd = (('[object String]' !== Object.prototype.toString.call(msg)) ? JSON.stringify(msg) : msg);
+
+    var authToken = getAuthToken('PUT', uri, cmd);
+    if(!authToken) return(false);
+
+    var t1 = new Date();
+    var xhr = new XMLHttpRequest();
+    xhr.timeout = 1000;
+    xhr.open('PUT', uri);
+    xhr.setRequestHeader('content-type', 'application/json; charset=utf-8');
+    xhr.setRequestHeader('accept', 'application/json');
+    xhr.setRequestHeader('x-body', cmd);
+    xhr.setRequestHeader('x-auth1', authToken.until);
+    xhr.setRequestHeader('x-auth2', authToken.hash);
+    xhr.onload = function() {
+      var result = (200 === xhr.status) ? JSON.parse(xhr.responseText) : { };
+      result.deltams = (new Date() - t1);
+      result.status = xhr.status;
+      result.statusText = xhr.statusText;
+      if(callback) callback(result);
+    };
+    xhr.send(cmd);
+
+    // $.ajax({
+    //   uri: uri,
+    //   data: cmd,
+    //   headers: { 'x-body': cmd,
+    //              'x-auth1', authToken.until,
+    //              'x-auth2', authToken.hash },
+    //   method: 'PUT',
+    //   timeout: 1000, // 1 sec timeout
+    //   contentType: 'application/json',
+    //   dataType: 'json',
+    //   success: function(result, status, xhr) {
+    //     var t2 = new Date();
+    //     retval = result;
+    //     retval.deltams = (t2 - t1);
+    //     if(callback) callback(retval);
+    //   },
+    //   error: function(xhr, status, error) {
+    //     var t2 = new Date();
+    //     retval.deltams = (t2 - t1);
+    //     retval.error = error;
+    //     if(callback) callback(retval);
+    //     alertError("ERROR: " + (t2-t1) + "ms\n\n" + error);
+    //   }
+    // });
+
+    return(true);
+  }
+
+  ////////////////////////////////////////
+  function btnClk(elem) {
+    elem.blur();
+
+if('devbtn-1-3' === elem.id) {
+  var devid = localStorage.getItem('devid1');
+    //sendDevice(devid, ['pulseRelay',1,250], function(cb) {
+    sendDevice(devid, ['hello',devid], function(cb) {
+    alertInfo(JSON.stringify(cb));
+  });
+  return;
+}
+
+    // [button id]-[devnum]-[outnum]
+    // devbtn-1-7
+    var vals = elem.id.split('-');
+                           // 0) 'devbtn'
+    var devnum = vals[1];  // 1) 1
+    var outnum = vals[2];  // 2) 7
+    var devid = localStorage.getItem('devid' + devnum);
+    if(!devid || (9 !== devid.length)) {
+      alertError('A device id has not been set.');
+      return;
+    }
+
+    var msg = ["pulseRelay", parseInt(outnum), 250];
+
+    sendDevice(devid, msg, function(result) {
+      if(200 === result.status) {
+        graphTimes(devnum, result.deltams);
+      } else {
+        alertError("Request Failed:&nbsp;&nbsp;" +result.statusText+ " (" +result.status+ ")<br><br><small>(flight time "+result.deltams+"ms)</small>");
+      }
+    });
+  }
+
+  ////////////////////////////////////////
+  function getAuthToken(method, uri, msg, untilUtc) {
+    var pwdHash = getStoredCreds().pwdHash;
+    if(!pwdHash) {
+      alertError('A password has not been set.');
+      return(void 0);
+    }
+
+    if(!untilUtc) {
+      untilUtc = Date.now() + 8000;  // valid for 8 sec
+    } else if (untilUtc < 86401) {   // if less than 1 day, treat as offset
+      untilUtc += Date.now();
+    }
+    var b32UntilUtc = DateCoder.encode(untilUtc);
+    var val = (method + uri + msg + b32UntilUtc);
+    var hash = CryptoJS.HmacSHA256(val, pwdHash);
+    var b64Hash = hash.toString(CryptoJS.enc.Base64);
+    b64Hash = b64Hash.replace(/=+$/,''); // trim trailing =
+
+    var authToken = {
+      until: b32UntilUtc,
+      hash: b64Hash
+    };
+
+    //alertInfo(JSON.stringify(authToken));
+    return(authToken);
+  }
+
+  ////////////////////////////////////////
+  // function showResult(responseText) {
+  //   var resObj = JSON.parse(responseText);
+  //   var msg = resObj.resultText;
+  //   var code = resObj.resultCode;
+  //   if(0 !== code) {
+  //     $(resultField).css({ 'color': 'red', 'font-size': '125%' });
+  //     $(resultField).text('Error: ' + msg + ' ('+code+')');
+  //   } else {
+  //     $(resultField).css({ 'color': '', 'font-size': '' });
+  //     $(resultField).text(msg);
+  //   }
+
+  //   setTimeout(function() {
+  //     $(resultField).text('');
+  //   }, 15000);
+  // }
+</script>
+</head>
+<body>
+
+<nav class="navbar navbar-inverse navbar-fixed-top" role="navigation">
+  <!-- Brand and toggle get grouped for better mobile display -->
+  <div class="container">
+    <div class="navbar-header">
+      <span class="navbar-brand">Device Control Panel</span>
+      <button type="button" class="navbar-toggle" data-toggle="collapse" data-target="#navbar1">
+        <span class="sr-only">Toggle navigation</span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+      </button>
+    </div>
+
+    <!-- Collect the nav links, forms, and other content for toggling -->
+    <div class="collapse navbar-collapse" id="navbar1">
+<!--
+      <ul class="nav navbar-nav">
+        <li><a href="#">Home</a></li>
+        <li><a href="#">Profile</a></li>
+        <li class="dropdown">
+          <a href="#" data-toggle="dropdown" class="dropdown-toggle">Messages <b class="caret"></b></a>
+          <ul class="dropdown-menu">
+            <li><a href="#">Inbox</a></li>
+            <li><a href="#">Drafts</a></li>
+            <li><a href="#">Sent Items</a></li>
+            <li class="divider"></li>
+            <li><a href="#">Trash</a></li>
+          </ul>
+        </li>
+      </ul>
+-->
+      <ul class="nav navbar-nav navbar-right">
+        <li class="dropdown">
+          <a class="dropdown-toggle" href="#" data-toggle="dropdown"><span class="glyphicon glyphicon-home"></span>&nbsp;&nbsp;Sign In</a>
+          <div class="dropdown-menu" style="padding:17px">
+            <form class="form-group" onsubmit="return signin(this)">
+              <input class="form-control" id="email" placeholder="email" type="text">
+              <input class="form-control" id="password" placeholder="password" type="password">
+              <div class="checkbox" style="margin: 5px; margin-top: 15px"><label class="checkbox inline"><input id="showpw" type="checkbox" onchange="document.getElementById('password').type = this.checked ? 'text' : 'password'"> Show password</label></div>
+              <div class="checkbox" style="margin: 5px; margin-bottom: 20px"><label class="checkbox inline"><input id="persist" type="checkbox" checked> Remember me</label></div>
+              <button class="btn btn-success" id="btnSignin" type="submit" style="margin-right:10px">Sign In</button>
+              <button class="btn btn-warning" id="btnSignout" type="submit" onclick="parentNode.value='flush'">Sign Out</button>
+            </form>
+          </div>
+        </li>
+      </ul>
+
+      <ul class="nav navbar-nav navbar-right">
+        <li class="dropdown">
+        <a href="#" data-toggle="dropdown" class="dropdown-toggle"><span class="glyphicon glyphicon-cog"></span>&nbsp;&nbsp;Settings <b class="caret"></b></a>
+          <ul class="dropdown-menu">
+            <li role="presentation"><a role="menuitem" tabindex="-1" href="#">Action</a></li>
+            <li role="presentation"><a role="menuitem" tabindex="-1" href="#">Another action</a></li>
+            <li role="presentation"><a role="menuitem" tabindex="-1" href="#">Something else here</a></li>
+            <li role="presentation"><a role="menuitem" tabindex="-1" href="#">Separated link</a></li>
+            <li role="presentation" class="divider"></li>
+            <li role="presentation"><input id="devid12" tabindex="-1" class="form-control" type="text" placeholder="Device Id"></li>
+          </ul>
+        </li>
+      </ul>
+
+    </div><!-- /.navbar-collapse -->
+  </div>
+</nav>
+
+<!-- device 1 -->
+<div class="col-sm-12" style="padding: 12px">
+  <div class="col-sm-7" style="min-width: 450px">
+    <div class="panel panel-default">
+      <div class="panel-heading">
+        <div class="row">
+          <div class="col-xs-8"><h4 style="margin-top: 6px; margin-bottom: 0px;">Device 1</h4></div>
+          <div class="col-xs-4">
+            <input id="devid1" type="text" placeholder="Device Id" class="form-control pull-right" onchange="devidChange(this)">
+          </div>
+        </div>
+      </div>
+      <div class="panel-footer">
+        <div class="row" style="padding: 24px">
+          <button id="devbtn-1-1" type="button" class="btn btn-success" onclick="btnClk(this)"><span class="glyphicon glyphicon-cog"></span> Button 1</button>
+          <button id="devbtn-1-2" type="button" class="btn btn-success" onclick="btnClk(this)"><span class="glyphicon glyphicon-cog"></span> Button 2</button>
+          <button id="devbtn-1-3" type="button" class="btn btn-success" onclick="btnClk(this)"><span class="glyphicon glyphicon-cog"></span> Button 3</button>
+        </div>
+        <div class="progress" style="margin: 0; margin-left: 9px; margin-right: 9px">
+          <div class="progress-bar progress-bar-success" id="devbar-1-min"></div>
+          <div class="progress-bar progress-bar-primary" id="devbar-1-avg"></div>
+          <div class="progress-bar progress-bar-warning" id="devbar-1-max"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- device 2 -->
+<div class="col-sm-12" style="padding: 12px">
+  <div class="col-sm-7" style="min-width: 450px">
+    <div class="panel panel-default">
+      <div class="panel-heading">
+        <div class="row">
+          <div class="col-xs-8"><h4 style="margin-top: 6px; margin-bottom: 0px;">Device 2</h4></div>
+          <div class="col-xs-4">
+            <input id="devid2" type="text" placeholder="Device Id" class="form-control pull-right" onchange="devidChange(this)">
+          </div>
+        </div>
+      </div>
+      <div class="panel-footer">
+        <div class="row" style="padding: 24px">
+          <button id="devbtn-2-1" type="button" class="btn btn-primary" onclick="btnClk(this)"><span class="glyphicon glyphicon-cog"></span> Button 1</button>
+          <button id="devbtn-2-1" type="button" class="btn btn-primary" onclick="btnClk(this)"><span class="glyphicon glyphicon-cog"></span> Button 2</button>
+          <button id="devbtn-2-1" type="button" class="btn btn-primary" onclick="btnClk(this)"><span class="glyphicon glyphicon-cog"></span> Button 3</button>
+        </div>
+        <div class="progress" style="margin: 0; margin-left: 9px; margin-right: 9px">
+          <div class="progress-bar progress-bar-success" id="devbar-2-min"></div>
+          <div class="progress-bar progress-bar-primary" id="devbar-2-avg"></div>
+          <div class="progress-bar progress-bar-warning" id="devbar-2-max"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
